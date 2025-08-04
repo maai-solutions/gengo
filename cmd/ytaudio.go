@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"maai.solutions/gengo/internal/extractors/ytaudio"
 	"maai.solutions/gengo/internal/extractors/asr"
+	"maai.solutions/gengo/internal/extractors/ytaudio"
 )
 
 var (
@@ -49,7 +49,7 @@ The command supports various options:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		videoURL := args[0]
-		
+
 		// Validate YouTube URL (basic check)
 		if !isValidYouTubeURL(videoURL) {
 			fmt.Printf("Error: Invalid YouTube URL: %s\n", videoURL)
@@ -117,7 +117,7 @@ The command supports various options:
 
 			// Create markdown content with metadata
 			content := formatTranscriptMarkdown(videoURL, result)
-			
+
 			if err := os.WriteFile(transcriptPath, []byte(content), 0644); err != nil {
 				fmt.Printf("Error writing transcript file: %v\n", err)
 				os.Exit(1)
@@ -150,7 +150,7 @@ This includes:
 - Required Python packages (if using OpenAI Whisper)`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Checking YouTube audio transcription dependencies...")
-		
+
 		if err := ytaudio.CheckDependencies(); err != nil {
 			fmt.Printf("❌ Dependency check failed: %v\n", err)
 			fmt.Println("\nTo fix this, please install the missing dependencies:")
@@ -159,9 +159,9 @@ This includes:
 			fmt.Println("- Or install whisper.cpp: https://github.com/ggerganov/whisper.cpp")
 			os.Exit(1)
 		}
-		
+
 		fmt.Println("✅ All dependencies are available!")
-		
+
 		// Show available models
 		fmt.Println("\nAvailable Whisper models:")
 		models := []string{"tiny", "base", "small", "medium", "large"}
@@ -183,10 +183,10 @@ var modelsCmd = &cobra.Command{
 	Long:  `List all available Whisper models and their locations.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Available Whisper models:")
-		
+
 		models := []string{"tiny", "base", "small", "medium", "large"}
 		foundAny := false
-		
+
 		for _, model := range models {
 			modelPath := ytaudio.FindWhisperModel(model)
 			if modelPath != "" {
@@ -196,7 +196,7 @@ var modelsCmd = &cobra.Command{
 				fmt.Printf("  ❌ %s: not found\n", model)
 			}
 		}
-		
+
 		if !foundAny {
 			fmt.Println("\nNo Whisper models found!")
 			fmt.Println("Please install whisper models:")
@@ -209,12 +209,12 @@ var modelsCmd = &cobra.Command{
 func init() {
 	// Add ytaudio command to root
 	rootCmd.AddCommand(ytaudioCmd)
-	
+
 	// Add subcommands to ytaudio
 	ytaudioCmd.AddCommand(transcribeCmd)
 	ytaudioCmd.AddCommand(checkCmd)
 	ytaudioCmd.AddCommand(modelsCmd)
-	
+
 	// Add flags to transcribe command
 	transcribeCmd.Flags().StringVarP(&ytOutputDir, "output", "o", "./ytaudio_output", "Output directory for transcripts and temporary files")
 	transcribeCmd.Flags().StringVarP(&ytModel, "model", "m", "base", "Whisper model to use (tiny, base, small, medium, large)")
@@ -234,7 +234,7 @@ func isValidYouTubeURL(url string) bool {
 		"youtube.com/v/",
 		"m.youtube.com/watch",
 	}
-	
+
 	for _, pattern := range patterns {
 		if contains(url, pattern) {
 			return true
@@ -245,12 +245,12 @@ func isValidYouTubeURL(url string) bool {
 
 // contains checks if a string contains a substring (case-insensitive)
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && 
-		   (s == substr || 
-		    len(s) > len(substr) && 
-		    (s[:len(substr)] == substr || 
-		     s[len(s)-len(substr):] == substr ||
-		     indexOf(s, substr) >= 0))
+	return len(s) >= len(substr) &&
+		(s == substr ||
+			len(s) > len(substr) &&
+				(s[:len(substr)] == substr ||
+					s[len(s)-len(substr):] == substr ||
+					indexOf(s, substr) >= 0))
 }
 
 // indexOf returns the index of substr in s, or -1 if not found
@@ -270,7 +270,7 @@ func generateTranscriptFilename(videoURL string) string {
 	if videoID == "" {
 		videoID = "transcript"
 	}
-	
+
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 	return fmt.Sprintf("%s_%s.md", videoID, timestamp)
 }
@@ -288,7 +288,7 @@ func extractVideoID(url string) string {
 			return url[start:end]
 		}
 	}
-	
+
 	// Handle youtu.be/ID format
 	if idx := indexOf(url, "youtu.be/"); idx >= 0 {
 		start := idx + 9
@@ -300,7 +300,7 @@ func extractVideoID(url string) string {
 			return url[start:end]
 		}
 	}
-	
+
 	return ""
 }
 
@@ -311,7 +311,7 @@ func formatTranscriptMarkdown(videoURL string, result *ytaudio.TranscriptionResu
 	if videoID != "" {
 		title = fmt.Sprintf("YouTube Video Transcript (%s)", videoID)
 	}
-	
+
 	content := fmt.Sprintf(`# %s
 
 **Source:** %s  
@@ -324,6 +324,6 @@ func formatTranscriptMarkdown(videoURL string, result *ytaudio.TranscriptionResu
 
 %s
 `, title, videoURL, time.Now().Format("2006-01-02 15:04:05"), result.Duration, result.Text)
-	
+
 	return content
 }

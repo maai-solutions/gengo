@@ -42,19 +42,19 @@ The command supports various options:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		pdfFile := args[0]
-		
+
 		// Check if file exists
 		if _, err := os.Stat(pdfFile); os.IsNotExist(err) {
 			fmt.Printf("Error: File does not exist: %s\n", pdfFile)
 			os.Exit(1)
 		}
-		
+
 		// Create PDF extractor
 		extractor := extractors.NewTextExtractor()
-		
+
 		var text string
 		var err error
-		
+
 		// Extract text
 		if len(pages) > 0 {
 			text, err = extractor.ExtractPages(pdfFile, pages)
@@ -69,12 +69,12 @@ The command supports various options:
 				os.Exit(1)
 			}
 		}
-		
+
 		// Clean text if requested
 		if cleanText {
 			text = extractor.CleanText(text)
 		}
-		
+
 		// Output text
 		if outputFile != "" {
 			err = os.WriteFile(outputFile, []byte(text), 0644)
@@ -97,26 +97,26 @@ var infoCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		pdfFile := args[0]
-		
+
 		// Check if file exists
 		if _, err := os.Stat(pdfFile); os.IsNotExist(err) {
 			fmt.Printf("Error: File does not exist: %s\n", pdfFile)
 			os.Exit(1)
 		}
-		
+
 		// Create PDF extractor
 		extractor := extractors.NewTextExtractor()
-		
+
 		// Get page count
 		pageCount, err := extractor.GetPageCount(pdfFile)
 		if err != nil {
 			fmt.Printf("Error getting PDF info: %v\n", err)
 			os.Exit(1)
 		}
-		
+
 		// Get file info
 		fileInfo, _ := os.Stat(pdfFile)
-		
+
 		fmt.Printf("PDF Information:\n")
 		fmt.Printf("  File: %s\n", filepath.Base(pdfFile))
 		fmt.Printf("  Path: %s\n", pdfFile)
@@ -128,11 +128,11 @@ var infoCmd = &cobra.Command{
 func init() {
 	// Add pdf command to root
 	rootCmd.AddCommand(pdfCmd)
-	
+
 	// Add subcommands to pdf
 	pdfCmd.AddCommand(extractCmd)
 	pdfCmd.AddCommand(infoCmd)
-	
+
 	// Add flags to extract command
 	extractCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file path (default: stdout)")
 	extractCmd.Flags().IntSliceVarP(&pages, "pages", "p", []int{}, "Specific pages to extract (e.g., --pages 1,3,5)")
