@@ -19,7 +19,7 @@ func TestTextExtractorCreation(t *testing.T) {
 
 func TestCleanText(t *testing.T) {
 	extractor := NewTextExtractor()
-	
+
 	tests := []struct {
 		input    string
 		expected string
