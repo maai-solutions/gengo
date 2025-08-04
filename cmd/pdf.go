@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	pdf "maai.solutions/gengo/internal"
+	extractors "maai.solutions/gengo/internal/extractors/pdf"
 )
 
 var (
@@ -50,7 +50,7 @@ The command supports various options:
 		}
 		
 		// Create PDF extractor
-		extractor := pdf.NewTextExtractor()
+		extractor := extractors.NewTextExtractor()
 		
 		var text string
 		var err error
@@ -105,7 +105,7 @@ var infoCmd = &cobra.Command{
 		}
 		
 		// Create PDF extractor
-		extractor := pdf.NewTextExtractor()
+		extractor := extractors.NewTextExtractor()
 		
 		// Get page count
 		pageCount, err := extractor.GetPageCount(pdfFile)

@@ -27,10 +27,23 @@ The user requested:
 ├── cmd/
 │   ├── root.go            # Cobra root command with Bubble Tea integration
 │   ├── interactive.go     # Bubble Tea model implementation
-│   └── pdf.go             # PDF extraction CLI commands
+│   ├── pdf.go             # PDF extraction CLI commands
+│   ├── ytaudio.go         # YouTube audio transcription CLI commands
+│   └── ytaudio_test.go    # YouTube audio command tests (all passing)
 ├── internal/
 │   ├── pdf_extractor.go   # Core PDF text extraction functionality
-│   └── pdf_test.go        # Comprehensive tests (all passing)
+│   ├── pdf_test.go        # PDF extractor tests (all passing)
+│   └── extractors/        # Additional extractors package
+│       ├── web_extractor.go      # Web content extraction functionality
+│       ├── web_extractor_test.go # Web extractor tests (all passing)
+│       ├── pdf/
+│       │   ├── pdf_extractor.go      # PDF extraction functionality
+│       │   └── pdf_extractor_test.go # PDF extractor tests
+│       ├── asr/           # Automatic Speech Recognition
+│       │   ├── asr.go             # Whisper ASR integration
+│       │   └── audio.go           # Audio processing utilities
+│       └── ytaudio/       # YouTube audio transcription
+│           └── ytaudio.go         # YouTube downloader + ASR pipeline
 ├── pkg/                   # (Reserved for future use)
 └── web/                   # (Reserved for future use)
 ```
@@ -75,7 +88,68 @@ type TextExtractor struct {
 - `GetPageCount()` variants - PDF page counting
 - Error handling for all input validation
 
-### 4. CLI Commands for PDF
+### 4. Web Content Extraction
+Located in `internal/extractors/web_extractor.go`:
+
+#### Core Structure
+```go
+type ContentExtractor struct {
+    Title     string
+    Content   []string
+    // Internal state for HTML parsing
+}
+```
+
+#### Key Functions
+- `ExtractFromHTML(htmlContent, url string)` - Extract from HTML string
+- `DownloadAndExtract(url string)` - Download webpage and extract content
+- `SaveToProject(title, content, projectName string)` - Save to markdown files
+
+#### Features
+- **HTML Parsing**: Clean extraction of titles and content
+- **Tag Filtering**: Skips script, style, nav, header, footer tags
+- **Markdown Output**: Formats extracted content as markdown
+- **File Management**: Sanitizes filenames and creates project directories
+- **Header Processing**: Converts HTML headers (h1-h6) to markdown format
+
+### 5. YouTube Audio Transcription
+Located in `cmd/ytaudio.go` and `internal/extractors/ytaudio/`:
+
+#### Core Structure
+```go
+type Service struct {
+    config     *Config
+    asrService *asr.Service
+}
+
+type TranscriptionResult struct {
+    Text     string
+    Duration time.Duration
+}
+```
+
+#### Key Commands
+- `gengo ytaudio transcribe <url>` - Download and transcribe YouTube video
+- `gengo ytaudio check` - Check required dependencies (ffmpeg, whisper)
+- `gengo ytaudio models` - List available Whisper models
+
+#### Features
+- **YouTube Download**: Uses github.com/kkdai/youtube/v2 for video download
+- **Audio Conversion**: FFmpeg integration for format conversion
+- **Whisper Integration**: Support for multiple Whisper models (tiny, base, small, medium, large)
+- **Project Structure**: Organized output with markdown formatting
+- **File Management**: Optional cleanup of temporary files
+- **URL Validation**: Comprehensive YouTube URL format support
+
+#### Command Options
+- `--model/-m`: Specify Whisper model (default: base)
+- `--output/-o`: Set output directory (default: ./ytaudio_output)
+- `--project/-p`: Save to organized project folder structure
+- `--keep/-k`: Keep downloaded audio files
+- `--verbose/-v`: Enable detailed progress output
+- `--timeout/-t`: Set operation timeout (default: 30 minutes)
+
+### 6. CLI Commands for PDF
 - `gengo pdf extract <file>` - Extract text from PDF
 - `gengo pdf info <file>` - Get PDF information
 - **Flags**:
@@ -118,13 +192,31 @@ All tests passing ✅:
 ```bash
 ./build.sh test ./internal/
 # Result: ok maai.solutions/gengo/internal 0.003s
+
+./build.sh test ./internal/extractors/
+# Result: ok maai.solutions/gengo/internal/extractors 5.007s
 ```
 
 ### Test Coverage
+
+#### PDF Extractor Tests (`internal/pdf_test.go`)
 - `TestTextExtractorCreation` - Struct initialization
 - `TestCleanText` - Text cleanup functionality
 - `TestErrorHandling` - Input validation and error cases
 - `ExampleTextExtractor` - Usage demonstration
+
+#### Web Extractor Tests (`internal/extractors/web_extractor_test.go`)
+- `TestNewContentExtractor` - Constructor and initialization
+- `TestIsContentTag` - HTML tag classification
+- `TestIsHeaderTag` - Header tag validation
+- `TestSanitizeFilename` - Filename sanitization
+- `TestExtractFromHTML` - HTML content extraction with various scenarios
+- `TestDownloadAndExtract` - HTTP download and extraction with test server
+- `TestDownloadAndExtractInvalidURL` - Error handling for invalid URLs
+- `TestSaveToProject` - File saving and project structure creation
+- `TestContentExtractorHandleData` - Text data processing
+- `TestContentExtractorIsInAnySkipTag` - Skip tag logic
+- Examples and usage demonstrations
 
 ## Usage Examples
 
@@ -162,6 +254,25 @@ All tests passing ✅:
 ./gengo pdf info document.pdf
 ```
 
+### YouTube Audio Transcription
+```bash
+# Basic transcription to stdout
+./gengo ytaudio transcribe "https://youtube.com/watch?v=example"
+
+# Save to project folder with organized structure
+./gengo ytaudio transcribe "https://youtube.com/watch?v=example" --project my-project
+
+# Use specific Whisper model with verbose output
+./gengo ytaudio transcribe "https://youtube.com/watch?v=example" --model large --verbose
+
+# Custom output directory and keep files
+./gengo ytaudio transcribe "https://youtube.com/watch?v=example" --output ./transcripts --keep
+
+# Check dependencies and available models
+./gengo ytaudio check
+./gengo ytaudio models
+```
+
 ### Testing
 ```bash
 # Run all internal package tests
@@ -169,6 +280,9 @@ All tests passing ✅:
 
 # Run specific test
 ./build.sh test ./internal/ -run TestCleanText
+
+# Run command tests
+./build.sh test ./cmd/ -v
 ```
 
 ## Future Enhancement Areas
@@ -201,8 +315,11 @@ Current `go.mod` includes:
 ```
 github.com/charmbracelet/bubbletea v0.25.0
 github.com/pdfcpu/pdfcpu v0.6.0
-github.com/spf13/cobra v1.8.0
-github.com/spf13/viper v1.18.2
+github.com/spf13/cobra v1.9.1
+github.com/spf13/viper v1.19.0
+github.com/kkdai/youtube/v2 v2.10.4
+github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20250802050304-0becabc8d68d
+golang.org/x/net v0.35.0
 ```
 
 ## Known Limitations
