@@ -5,6 +5,7 @@ go 1.24.5
 require (
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20250802050304-0becabc8d68d
+	github.com/go-skynet/go-llama.cpp v0.0.0-20240314183750-6a8041ef6b46
 	github.com/kkdai/youtube/v2 v2.10.4
 	github.com/pdfcpu/pdfcpu v0.6.0
 	github.com/spf13/cobra v1.9.1
