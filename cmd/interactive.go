@@ -17,9 +17,14 @@ import (
 )
 
 type model struct {
-	input   string
-	cursor  int
-	history []string
+	input     string
+	cursor    int
+	history   []string
+	selection struct {
+		start int
+		end   int
+		active bool
+	}
 }
 
 func initialModel() model {
@@ -27,6 +32,11 @@ func initialModel() model {
 		input:   "",
 		cursor:  0,
 		history: []string{},
+		selection: struct {
+			start int
+			end   int
+			active bool
+		}{},
 	}
 }
 
@@ -39,6 +49,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
+			// If text is selected, copy it
+			if m.selection.active && m.selection.start != m.selection.end {
+				start := min(m.selection.start, m.selection.end)
+				end := max(m.selection.start, m.selection.end)
+				selectedText := m.input[start:end]
+				if err := copyToClipboard(selectedText); err != nil {
+					m.history = append(m.history, fmt.Sprintf("Error copying to clipboard: %v", err))
+				} else {
+					m.history = append(m.history, fmt.Sprintf("Copied: %s", selectedText))
+				}
+				m.selection.active = false
+				return m, nil
+			}
 			return m, tea.Quit
 		case "enter":
 			command := strings.TrimSpace(m.input)
@@ -57,35 +80,122 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.input = ""
 			m.cursor = 0
+			m.selection.active = false
 		case "backspace":
-			if m.cursor > 0 {
+			// If there's a selection, delete it
+			if m.selection.active && m.selection.start != m.selection.end {
+				start := min(m.selection.start, m.selection.end)
+				end := max(m.selection.start, m.selection.end)
+				m.input = m.input[:start] + m.input[end:]
+				m.cursor = start
+				m.selection.active = false
+			} else if m.cursor > 0 {
+				// Normal backspace
 				m.input = m.input[:m.cursor-1] + m.input[m.cursor:]
 				m.cursor--
+			}
+		case "ctrl+v":
+			// Paste from clipboard
+			pasteText, err := pasteFromClipboard()
+			if err != nil {
+				m.history = append(m.history, fmt.Sprintf("Error pasting from clipboard: %v", err))
+			} else if pasteText != "" {
+				// If there's a selection, replace it
+				if m.selection.active && m.selection.start != m.selection.end {
+					start := min(m.selection.start, m.selection.end)
+					end := max(m.selection.start, m.selection.end)
+					m.input = m.input[:start] + pasteText + m.input[end:]
+					m.cursor = start + len(pasteText)
+					m.selection.active = false
+				} else {
+					// Normal paste at cursor
+					m.input = m.input[:m.cursor] + pasteText + m.input[m.cursor:]
+					m.cursor += len(pasteText)
+				}
+			} else {
+				m.history = append(m.history, "Clipboard is empty")
+			}
+		case "ctrl+a":
+			// Select all
+			if len(m.input) > 0 {
+				m.selection.active = true
+				m.selection.start = 0
+				m.selection.end = len(m.input)
+				m.cursor = len(m.input)
+			}
+		case "shift+left":
+			// Start or extend selection to the left
+			if !m.selection.active {
+				m.selection.active = true
+				m.selection.start = m.cursor
+				m.selection.end = m.cursor
+			}
+			if m.cursor > 0 {
+				m.cursor--
+				m.selection.end = m.cursor
+			}
+		case "shift+right":
+			// Start or extend selection to the right
+			if !m.selection.active {
+				m.selection.active = true
+				m.selection.start = m.cursor
+				m.selection.end = m.cursor
+			}
+			if m.cursor < len(m.input) {
+				m.cursor++
+				m.selection.end = m.cursor
 			}
 		case "left":
 			if m.cursor > 0 {
 				m.cursor--
+				m.selection.active = false
 			}
 		case "right":
 			if m.cursor < len(m.input) {
 				m.cursor++
+				m.selection.active = false
 			}
 		default:
 			// Insert character at cursor position
 			if len(msg.String()) == 1 {
-				m.input = m.input[:m.cursor] + msg.String() + m.input[m.cursor:]
-				m.cursor++
+				// If there's a selection, replace it
+				if m.selection.active && m.selection.start != m.selection.end {
+					start := min(m.selection.start, m.selection.end)
+					end := max(m.selection.start, m.selection.end)
+					m.input = m.input[:start] + msg.String() + m.input[end:]
+					m.cursor = start + 1
+					m.selection.active = false
+				} else {
+					m.input = m.input[:m.cursor] + msg.String() + m.input[m.cursor:]
+					m.cursor++
+				}
 			}
 		}
 	}
 	return m, nil
 }
 
+// Helper functions for min/max
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func (m model) View() string {
 	var s strings.Builder
 
 	s.WriteString("GenGo Interactive CLI\n")
-	s.WriteString("Type '/help' for commands, '/exit' to quit or 'Ctrl+C'\n")
+	s.WriteString("Type '/help' for commands, '/exit' to quit\n")
+	s.WriteString("Copy: Ctrl+C (with selection) | Paste: Ctrl+V | Select All: Ctrl+A\n")
 	s.WriteString(strings.Repeat("─", 50) + "\n\n")
 
 	// Show command history
@@ -102,13 +212,31 @@ func (m model) View() string {
 		s.WriteString("  web extract <url>               - Extract web page content\n\n")
 	}
 
-	// Show current input with cursor
+	// Show current input with cursor and selection
 	s.WriteString("> ")
 	for i, r := range m.input {
+		// Handle selection highlighting
+		if m.selection.active {
+			start := min(m.selection.start, m.selection.end)
+			end := max(m.selection.start, m.selection.end)
+			if i >= start && i < end {
+				// Highlight selected text
+				s.WriteString("\033[7m") // Reverse video
+			}
+		}
+		
 		if i == m.cursor {
 			s.WriteString("│")
 		}
 		s.WriteString(string(r))
+		
+		// Reset highlighting after selected text
+		if m.selection.active {
+			end := max(m.selection.start, m.selection.end)
+			if i == end-1 {
+				s.WriteString("\033[0m") // Reset
+			}
+		}
 	}
 	if m.cursor >= len(m.input) {
 		s.WriteString("│")
@@ -145,18 +273,18 @@ func (m model) getHelpText() string {
   /help                                    - Show this help
   /exit, /quit                            - Exit the interactive mode
   
-  ytaudio transcribe <youtube-url>        - Transcribe YouTube video
+  ytaudio transcribe <youtube-url> [--project name] [--output file] - Transcribe YouTube video
   ytaudio check                           - Check ytaudio dependencies
   
-  pdf extract <file.pdf>                  - Extract text from PDF
+  pdf extract <file.pdf> [--project name] [--output file] - Extract text from PDF
   pdf info <file.pdf>                     - Get PDF information
   
-  web extract <url>                       - Extract content from web page
+  web extract <url> [--project name] [--output file] - Extract content from web page
   
 Examples:
-  ytaudio transcribe https://youtube.com/watch?v=abc123
-  pdf extract document.pdf
-  web extract https://example.com/article
+  ytaudio transcribe https://youtube.com/watch?v=abc123 --project my-videos
+  pdf extract document.pdf --project docs --output extracted.txt
+  web extract https://example.com/article --project web-content
   pdf info document.pdf`
 }
 
@@ -182,10 +310,27 @@ func (m model) handleYtAudioCommand(args []string) string {
 // handleYtAudioTranscribe handles YouTube transcription
 func (m model) handleYtAudioTranscribe(args []string) string {
 	if len(args) == 0 {
-		return "Usage: ytaudio transcribe <youtube-url>"
+		return "Usage: ytaudio transcribe <youtube-url> [--project project-name] [--output filename]"
 	}
 
 	videoURL := args[0]
+	
+	// Parse additional arguments for project and output
+	var projectName, outputFile string
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--project":
+			if i+1 < len(args) {
+				projectName = args[i+1]
+				i++
+			}
+		case "--output":
+			if i+1 < len(args) {
+				outputFile = args[i+1]
+				i++
+			}
+		}
+	}
 
 	// Validate YouTube URL (basic check)
 	if !isValidYouTubeURL(videoURL) {
@@ -199,17 +344,17 @@ func (m model) handleYtAudioTranscribe(args []string) string {
 	// Configure ASR with default settings
 	asrConfig := asr.DefaultConfig()
 
-	// Configure YouTube transcription service
-	outputDir := "./transcripts"
+	// Configure YouTube transcription service with temp directory
+	tempDir := filepath.Join(os.TempDir(), "gengo-ytaudio-interactive")
 	config := &ytaudio.Config{
-		OutputDir:    outputDir,
+		OutputDir:    tempDir,
 		ASRConfig:    asrConfig,
-		CleanupFiles: false, // Keep files by default in interactive mode
+		CleanupFiles: true, // Cleanup temp files in interactive mode
 	}
 
-	// Ensure output directory exists
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Sprintf("Error creating output directory: %v", err)
+	// Ensure temp directory exists
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return fmt.Sprintf("Error creating temp directory: %v", err)
 	}
 
 	// Create service and transcribe
@@ -219,19 +364,22 @@ func (m model) handleYtAudioTranscribe(args []string) string {
 		return fmt.Sprintf("Error transcribing video: %v", err)
 	}
 
-	// Generate filename and save transcript
-	filename := generateTranscriptFilename(videoURL)
-	transcriptPath := filepath.Join(outputDir, filename)
-
+	// Generate filename using video title and ID from result
+	filename := generateTranscriptFilenameFromResult(result)
+	
+	// Create output configuration with parsed project and output
+	outputConfig := NewOutputConfig(projectName, outputFile)
+	
 	// Create markdown content with metadata
 	content := formatTranscriptMarkdown(videoURL, result)
-
-	if err := os.WriteFile(transcriptPath, []byte(content), 0644); err != nil {
+	
+	outputPath, err := outputConfig.SaveToProject([]byte(content), filename)
+	if err != nil {
 		return fmt.Sprintf("Error saving transcript: %v", err)
 	}
 
 	return fmt.Sprintf("✅ Transcription completed!\nSaved to: %s\nDuration: %.2f seconds",
-		transcriptPath, result.Duration.Seconds())
+		outputPath, result.Duration.Seconds())
 }
 
 // handleYtAudioCheck checks ytaudio dependencies
@@ -279,7 +427,7 @@ func (m model) handlePdfCommand(args []string) string {
 // handlePdfExtract handles PDF text extraction
 func (m model) handlePdfExtract(args []string) string {
 	if len(args) == 0 {
-		return "Usage: pdf extract <file.pdf> [--pages 1,2,3] [--output output.txt] [--clean]"
+		return "Usage: pdf extract <file.pdf> [--pages 1,2,3] [--output output.txt] [--project project-name] [--clean]"
 	}
 
 	pdfFile := args[0]
@@ -291,6 +439,7 @@ func (m model) handlePdfExtract(args []string) string {
 
 	// Parse additional arguments
 	var outputFile string
+	var projectName string
 	var pages []int
 	var cleanText bool
 
@@ -299,6 +448,11 @@ func (m model) handlePdfExtract(args []string) string {
 		case "--output":
 			if i+1 < len(args) {
 				outputFile = args[i+1]
+				i++
+			}
+		case "--project":
+			if i+1 < len(args) {
+				projectName = args[i+1]
 				i++
 			}
 		case "--clean":
@@ -341,13 +495,19 @@ func (m model) handlePdfExtract(args []string) string {
 		text = extractor.CleanText(text)
 	}
 
+	// Create output configuration
+	outputConfig := NewOutputConfig(projectName, outputFile)
+	
+	// Generate default filename from PDF file
+	defaultFilename := filepath.Base(pdfFile) + ".txt"
+	
 	// Output text
-	if outputFile != "" {
-		err = os.WriteFile(outputFile, []byte(text), 0644)
+	if projectName != "" || outputFile != "" {
+		outputPath, err := outputConfig.SaveToProject([]byte(text), defaultFilename)
 		if err != nil {
-			return fmt.Sprintf("Error writing to file %s: %v", outputFile, err)
+			return fmt.Sprintf("Error saving text: %v", err)
 		}
-		return fmt.Sprintf("✅ Text extracted and saved to: %s", outputFile)
+		return fmt.Sprintf("✅ Text extracted and saved to: %s", outputPath)
 	} else {
 		// For interactive mode, show first 500 characters
 		if len(text) > 500 {
@@ -442,14 +602,14 @@ func (m model) handleWebExtract(args []string) string {
 
 	// Handle output based on specified options
 	if projectName != "" {
-		// Save to project structure
-		err := webextractors.SaveToProject(title, content, projectName)
+		// Use centralized output management
+		outputConfig := NewOutputConfig(projectName, "")
+		defaultFilename := fmt.Sprintf("%s.md", title)
+		outputPath, err := outputConfig.SaveToProject([]byte(content), defaultFilename)
 		if err != nil {
 			return fmt.Sprintf("Error saving to project: %v", err)
 		}
-
-		projectPath := filepath.Join(".", projectName, fmt.Sprintf("%s.md", title))
-		return fmt.Sprintf("✅ Content extracted and saved to project!\nFile: %s\nTitle: %s", projectPath, title)
+		return fmt.Sprintf("✅ Content extracted and saved to project!\nFile: %s\nTitle: %s", outputPath, title)
 
 	} else if outputFile != "" {
 		// Save to specific file

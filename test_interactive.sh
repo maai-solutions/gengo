@@ -1,18 +1,12 @@
-#!/bin/bash
-
-# Test script for Bubble Tea interactive mode
-echo "Testing Bubble Tea interactive mode..."
+#\!/bin/bash
+echo "Testing GenGo interactive mode with copy/paste"
 echo ""
-
-# Create a temporary expect-like script using here document
-echo "Starting interactive mode test..."
-
-# Use printf to send keystrokes to the application
-# First type "hello", then press enter, then type "/exit" and press enter
-(
-    sleep 1
-    printf "hello\n"
-    sleep 1
-    printf "/exit\n"
-    sleep 1
-) | ./gengo
+echo "Instructions:"
+echo "1. Type some text and use Shift+Left/Right to select"
+echo "2. Press Ctrl+C to copy selected text"  
+echo "3. Press Ctrl+V to paste"
+echo "4. Press Ctrl+A to select all"
+echo "5. Use backspace to delete selected text"
+echo ""
+echo "Starting GenGo interactive mode..."
+./gengo

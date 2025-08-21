@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -12,7 +11,6 @@ import (
 
 var (
 	webOutputFile  string
-	webOutputDir   string
 	webProjectName string
 	webVerbose     bool
 )
@@ -79,45 +77,23 @@ Options:
 			fmt.Printf("Content length: %d characters\n", len(content))
 		}
 
+		// Create output configuration
+		outputConfig := NewOutputConfig(webProjectName, webOutputFile)
+		
+		// Generate default filename from title
+		defaultFilename := fmt.Sprintf("%s.md", title)
+		
 		// Handle output based on specified options
-		if webProjectName != "" {
-			// Save to project structure
-			err := extractors.SaveToProject(title, content, webProjectName)
+		if webProjectName != "" || webOutputFile != "" {
+			outputPath, err := outputConfig.SaveToProject([]byte(content), defaultFilename)
 			if err != nil {
-				fmt.Printf("Error saving to project: %v\n", err)
+				fmt.Printf("Error saving content: %v\n", err)
 				os.Exit(1)
 			}
-
-			projectPath := filepath.Join(".", webProjectName, fmt.Sprintf("%s.md", title))
-			fmt.Printf("✅ Content extracted and saved to project!\n")
-			fmt.Printf("File: %s\n", projectPath)
-
-		} else if webOutputFile != "" {
-			// Save to specific file
-			err := os.WriteFile(webOutputFile, []byte(content), 0644)
-			if err != nil {
-				fmt.Printf("Error writing to file %s: %v\n", webOutputFile, err)
-				os.Exit(1)
-			}
-			fmt.Printf("✅ Content extracted and saved to: %s\n", webOutputFile)
-
-		} else if webOutputDir != "" {
-			// Save to custom directory
-			if err := os.MkdirAll(webOutputDir, 0755); err != nil {
-				fmt.Printf("Error creating output directory: %v\n", err)
-				os.Exit(1)
-			}
-
-			filename := fmt.Sprintf("%s.md", title)
-			outputPath := filepath.Join(webOutputDir, filename)
-
-			err := os.WriteFile(outputPath, []byte(content), 0644)
-			if err != nil {
-				fmt.Printf("Error writing to file %s: %v\n", outputPath, err)
-				os.Exit(1)
-			}
-			fmt.Printf("✅ Content extracted and saved to: %s\n", outputPath)
-
+			
+			fmt.Printf("✅ Content extracted and saved!\n")
+			fmt.Printf("File: %s\n", outputPath)
+			fmt.Printf("Title: %s\n", title)
 		} else {
 			// Output to stdout
 			fmt.Print(content)
@@ -139,8 +115,7 @@ func init() {
 	webCmd.AddCommand(webExtractCmd)
 
 	// Add flags to extract command
-	webExtractCmd.Flags().StringVarP(&webOutputFile, "output", "o", "", "Output file path (default: stdout)")
-	webExtractCmd.Flags().StringVarP(&webOutputDir, "dir", "d", "", "Output directory path")
-	webExtractCmd.Flags().StringVarP(&webProjectName, "project", "p", "", "Project name (creates project folder structure)")
+	webExtractCmd.Flags().StringVarP(&webOutputFile, "output", "o", "", "Output filename (saved in PROJECTS or project subdirectory)")
+	webExtractCmd.Flags().StringVarP(&webProjectName, "project", "p", "", "Project name (creates subdirectory in PROJECTS)")
 	webExtractCmd.Flags().BoolVarP(&webVerbose, "verbose", "v", false, "Verbose output")
 }

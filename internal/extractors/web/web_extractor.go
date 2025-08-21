@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -161,23 +159,3 @@ func DownloadAndExtract(url string) (string, string, error) {
 	return title, content, nil
 }
 
-// SaveToProject saves content to a project folder structure
-func SaveToProject(title, content, projectName string) error {
-	projectDir := filepath.Join(".", projectName)
-	
-	// Create project directory if it doesn't exist
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		return fmt.Errorf("failed to create project directory: %v", err)
-	}
-
-	// Create filename from title
-	filename := fmt.Sprintf("%s.md", title)
-	filepath := filepath.Join(projectDir, filename)
-
-	// Write content to file
-	if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("failed to write file: %v", err)
-	}
-
-	return nil
-}

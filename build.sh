@@ -37,15 +37,15 @@ if command -v brew >/dev/null 2>&1; then
     if [ -d "$WHISPER_SOURCE_DIR" ]; then
         echo "Building whisper.cpp from source..."
         cd "$WHISPER_SOURCE_DIR"
-        make -j$(nproc)
+        make -j$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
         
         # Set CGO flags to use the source build
         export CGO_CPPFLAGS="-I${WHISPER_SOURCE_DIR}/include -I${WHISPER_SOURCE_DIR}/ggml/include"
-        export CGO_LDFLAGS="-L${WHISPER_SOURCE_DIR}/build/src -L${WHISPER_SOURCE_DIR}/build/ggml/src -lwhisper -lggml -lggml-base -lggml-cpu"
-        export LD_LIBRARY_PATH="${WHISPER_SOURCE_DIR}/build/src:${WHISPER_SOURCE_DIR}/build/ggml/src:${LD_LIBRARY_PATH}"
+        export CGO_LDFLAGS="-L${WHISPER_SOURCE_DIR}/build/src -L${WHISPER_SOURCE_DIR}/build/ggml/src -L${WHISPER_SOURCE_DIR}/build/ggml/src/ggml-metal -L${WHISPER_SOURCE_DIR}/build/ggml/src/ggml-blas -lwhisper -lggml -lggml-base -lggml-cpu -Wl,-rpath,${WHISPER_SOURCE_DIR}/build/src -Wl,-rpath,${WHISPER_SOURCE_DIR}/build/ggml/src -Wl,-rpath,${WHISPER_SOURCE_DIR}/build/ggml/src/ggml-metal -Wl,-rpath,${WHISPER_SOURCE_DIR}/build/ggml/src/ggml-blas"
+        export LD_LIBRARY_PATH="${WHISPER_SOURCE_DIR}/build/src:${WHISPER_SOURCE_DIR}/build/ggml/src:${WHISPER_SOURCE_DIR}/build/ggml/src/ggml-metal:${WHISPER_SOURCE_DIR}/build/ggml/src/ggml-blas:${LD_LIBRARY_PATH}"
         export CGO_ENABLED=1
         
-        cd /home/udg/projects/git/gengo
+        cd -
     else
         echo "Warning: Could not set up whisper.cpp source. ASR functionality may not work."
     fi

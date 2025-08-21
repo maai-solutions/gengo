@@ -33,6 +33,8 @@ func DefaultConfig() *Config {
 type TranscriptionResult struct {
 	Text     string
 	Duration time.Duration
+	Title    string // YouTube video title
+	VideoID  string // YouTube video ID
 	Error    error
 }
 
@@ -62,13 +64,20 @@ func (s *Service) TranscribeYouTubeVideo(ctx context.Context, videoURL string) (
 		return nil, fmt.Errorf("failed to create output directory: %w", err)
 	}
 
+	// Get video info first to extract title and ID
+	client := youtube.Client{}
+	video, err := client.GetVideo(videoURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get video info: %w", err)
+	}
+
 	// Generate unique filename
 	timestamp := time.Now().Unix()
 	baseFilename := fmt.Sprintf("video_%d", timestamp)
 	videoPath := filepath.Join(s.config.OutputDir, baseFilename+".mp4") // Default to mp4
 
-	// Download video using github.com/kkdai/youtube
-	if err := s.downloadVideo(ctx, videoURL, videoPath); err != nil {
+	// Download video using the video object we already fetched
+	if err := s.downloadVideoWithInfo(ctx, video, videoPath); err != nil {
 		return nil, fmt.Errorf("failed to download video: %w", err)
 	}
 
@@ -87,6 +96,8 @@ func (s *Service) TranscribeYouTubeVideo(ctx context.Context, videoURL string) (
 	return &TranscriptionResult{
 		Text:     strings.TrimSpace(result.Text),
 		Duration: duration,
+		Title:    video.Title,
+		VideoID:  video.ID,
 	}, nil
 }
 
@@ -119,6 +130,52 @@ func (s *Service) downloadVideo(ctx context.Context, videoURL, outputPath string
 	}
 
 	// Download the video/audio stream
+	stream, _, err := client.GetStream(video, bestFormat)
+	if err != nil {
+		return fmt.Errorf("failed to get video stream: %w", err)
+	}
+	defer stream.Close()
+
+	// Create the output file
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer file.Close()
+
+	// Copy the stream to the file
+	_, err = io.Copy(file, stream)
+	if err != nil {
+		return fmt.Errorf("failed to copy video: %w", err)
+	}
+
+	return nil
+}
+
+// downloadVideoWithInfo downloads a YouTube video using github.com/kkdai/youtube library
+// This function accepts a video object instead of URL to avoid duplicate API calls
+func (s *Service) downloadVideoWithInfo(ctx context.Context, video *youtube.Video, outputPath string) error {
+	// Find the best audio format
+	formats := video.Formats.WithAudioChannels()
+	if len(formats) == 0 {
+		return fmt.Errorf("no audio formats found for video")
+	}
+
+	// Select the best audio format (prefer highest bitrate)
+	var bestFormat *youtube.Format
+	for i := range formats {
+		format := &formats[i]
+		if bestFormat == nil || format.Bitrate > bestFormat.Bitrate {
+			bestFormat = format
+		}
+	}
+
+	if bestFormat == nil {
+		return fmt.Errorf("no suitable audio format found")
+	}
+
+	// Download the video/audio stream
+	client := youtube.Client{}
 	stream, _, err := client.GetStream(video, bestFormat)
 	if err != nil {
 		return fmt.Errorf("failed to get video stream: %w", err)

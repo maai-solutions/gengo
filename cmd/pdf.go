@@ -10,9 +10,10 @@ import (
 )
 
 var (
-	outputFile string
-	pages      []int
-	cleanText  bool
+	outputFile  string
+	pages       []int
+	cleanText   bool
+	projectName string
 )
 
 // pdfCmd represents the pdf command
@@ -75,14 +76,20 @@ The command supports various options:
 			text = extractor.CleanText(text)
 		}
 
+		// Create output configuration
+		outputConfig := NewOutputConfig(projectName, outputFile)
+		
+		// Generate default filename from PDF file
+		defaultFilename := filepath.Base(pdfFile) + ".txt"
+		
 		// Output text
-		if outputFile != "" {
-			err = os.WriteFile(outputFile, []byte(text), 0644)
+		if projectName != "" || outputFile != "" {
+			outputPath, err := outputConfig.SaveToProject([]byte(text), defaultFilename)
 			if err != nil {
-				fmt.Printf("Error writing to file %s: %v\n", outputFile, err)
+				fmt.Printf("Error saving text: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Text extracted and saved to: %s\n", outputFile)
+			fmt.Printf("Text extracted and saved to: %s\n", outputPath)
 		} else {
 			fmt.Print(text)
 		}
@@ -134,7 +141,8 @@ func init() {
 	pdfCmd.AddCommand(infoCmd)
 
 	// Add flags to extract command
-	extractCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file path (default: stdout)")
-	extractCmd.Flags().IntSliceVarP(&pages, "pages", "p", []int{}, "Specific pages to extract (e.g., --pages 1,3,5)")
+	extractCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output filename (saved in PROJECTS or project subdirectory)")
+	extractCmd.Flags().StringVarP(&projectName, "project", "p", "", "Project name (creates subdirectory in PROJECTS)")
+	extractCmd.Flags().IntSliceVarP(&pages, "pages", "", []int{}, "Specific pages to extract (e.g., --pages 1,3,5)")
 	extractCmd.Flags().BoolVarP(&cleanText, "clean", "c", false, "Clean extracted text by removing excessive whitespace")
 }

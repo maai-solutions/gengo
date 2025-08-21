@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,12 +14,12 @@ import (
 )
 
 var (
-	ytOutputDir   string
 	ytModel       string
 	ytVerbose     bool
 	ytKeepFiles   bool
 	ytTimeout     time.Duration
 	ytProjectName string
+	ytOutputFile  string
 )
 
 // ytaudioCmd represents the ytaudio command
@@ -48,6 +49,11 @@ The command supports various options:
 - Verbose output for detailed progress`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		// Debug: Print all flag values at the very start
+		if os.Getenv("GENGO_DEBUG") != "" {
+			fmt.Printf("DEBUG FLAGS: project=%q, output=%q, verbose=%v\n", ytProjectName, ytOutputFile, ytVerbose)
+		}
+		
 		videoURL := args[0]
 
 		// Validate YouTube URL (basic check)
@@ -74,24 +80,38 @@ The command supports various options:
 			asrConfig.WhisperModel = modelPath
 		}
 
-		// Configure YouTube transcription service
+		// Create output configuration
+		outputConfig := NewOutputConfig(ytProjectName, ytOutputFile)
+		
+		// Debug output
+		if os.Getenv("GENGO_DEBUG") != "" {
+			fmt.Printf("DEBUG ytaudio: ProjectName=%q, OutputFile=%q\n", ytProjectName, ytOutputFile)
+		}
+		
+		// Configure YouTube transcription service with temp directory
+		tempDir := filepath.Join(os.TempDir(), "gengo-ytaudio")
 		config := &ytaudio.Config{
-			OutputDir:    ytOutputDir,
+			OutputDir:    tempDir,
 			ASRConfig:    asrConfig,
 			CleanupFiles: !ytKeepFiles,
 		}
 
-		// Ensure output directory exists
-		if err := os.MkdirAll(ytOutputDir, 0755); err != nil {
-			fmt.Printf("Error creating output directory: %v\n", err)
+		// Ensure temp directory exists
+		if err := os.MkdirAll(tempDir, 0755); err != nil {
+			fmt.Printf("Error creating temp directory: %v\n", err)
 			os.Exit(1)
 		}
 
 		if ytVerbose {
 			fmt.Printf("Starting transcription of: %s\n", videoURL)
-			fmt.Printf("Output directory: %s\n", ytOutputDir)
+			if ytProjectName != "" {
+				fmt.Printf("Project: %s\n", ytProjectName)
+			}
+			if ytOutputFile != "" {
+				fmt.Printf("Output file: %s\n", ytOutputFile)
+			}
 			fmt.Printf("Whisper model: %s\n", ytModel)
-			fmt.Printf("Keep files: %t\n", ytKeepFiles)
+			fmt.Printf("Keep temp files: %t\n", ytKeepFiles)
 		}
 
 		// Create service and transcribe
@@ -102,33 +122,32 @@ The command supports various options:
 			os.Exit(1)
 		}
 
-		// Handle output based on project name or direct output
-		if ytProjectName != "" {
-			// Save to project structure
-			projectDir := filepath.Join(ytOutputDir, ytProjectName)
-			if err := os.MkdirAll(projectDir, 0755); err != nil {
-				fmt.Printf("Error creating project directory: %v\n", err)
+		// Generate default filename using video title and ID from result
+		defaultFilename := generateTranscriptFilenameFromResult(result)
+		
+		// Create markdown content with metadata
+		content := formatTranscriptMarkdown(videoURL, result)
+		
+		// Save to project structure
+		if ytProjectName != "" || ytOutputFile != "" {
+			// More debug
+			if os.Getenv("GENGO_DEBUG") != "" {
+				fmt.Printf("DEBUG: Before save - ProjectName=%q, OutputFile=%q, DefaultFile=%q\n", 
+					ytProjectName, ytOutputFile, defaultFilename)
+			}
+			
+			outputPath, err := outputConfig.SaveToProject([]byte(content), defaultFilename)
+			if err != nil {
+				fmt.Printf("Error saving transcript: %v\n", err)
 				os.Exit(1)
 			}
-
-			// Generate filename from video URL/ID
-			filename := generateTranscriptFilename(videoURL)
-			transcriptPath := filepath.Join(projectDir, filename)
-
-			// Create markdown content with metadata
-			content := formatTranscriptMarkdown(videoURL, result)
-
-			if err := os.WriteFile(transcriptPath, []byte(content), 0644); err != nil {
-				fmt.Printf("Error writing transcript file: %v\n", err)
-				os.Exit(1)
-			}
-
+			
 			if ytVerbose {
 				fmt.Printf("Transcription completed in %v\n", result.Duration)
 			}
-			fmt.Printf("Transcript saved to: %s\n", transcriptPath)
+			fmt.Printf("Transcript saved to: %s\n", outputPath)
 		} else {
-			// Output to stdout
+			// Output to stdout if no output specified
 			if ytVerbose {
 				fmt.Printf("Transcription completed in %v\n", result.Duration)
 				fmt.Println("--- Transcript ---")
@@ -216,12 +235,12 @@ func init() {
 	ytaudioCmd.AddCommand(modelsCmd)
 
 	// Add flags to transcribe command
-	transcribeCmd.Flags().StringVarP(&ytOutputDir, "output", "o", "./ytaudio_output", "Output directory for transcripts and temporary files")
+	transcribeCmd.Flags().StringVarP(&ytOutputFile, "output", "o", "", "Output filename (saved in PROJECTS or project subdirectory)")
 	transcribeCmd.Flags().StringVarP(&ytModel, "model", "m", "base", "Whisper model to use (tiny, base, small, medium, large)")
 	transcribeCmd.Flags().BoolVarP(&ytVerbose, "verbose", "v", false, "Enable verbose output")
 	transcribeCmd.Flags().BoolVarP(&ytKeepFiles, "keep", "k", false, "Keep downloaded audio files")
 	transcribeCmd.Flags().DurationVarP(&ytTimeout, "timeout", "t", 30*time.Minute, "Timeout for the entire operation")
-	transcribeCmd.Flags().StringVarP(&ytProjectName, "project", "p", "", "Save transcript to a project folder (creates organized structure)")
+	transcribeCmd.Flags().StringVarP(&ytProjectName, "project", "p", "", "Project name (creates subdirectory in PROJECTS)")
 }
 
 // isValidYouTubeURL performs basic validation of YouTube URLs
@@ -275,6 +294,50 @@ func generateTranscriptFilename(videoURL string) string {
 	return fmt.Sprintf("%s_%s.md", videoID, timestamp)
 }
 
+// generateTranscriptFilenameFromResult creates a filename using video title and ID
+func generateTranscriptFilenameFromResult(result *ytaudio.TranscriptionResult) string {
+	// Sanitize title for filename
+	title := sanitizeFilename(result.Title)
+	if title == "" {
+		title = "transcript"
+	}
+	
+	// Limit title length to avoid filesystem issues
+	if len(title) > 50 {
+		title = title[:50]
+	}
+	
+	// Include video ID for uniqueness
+	videoID := result.VideoID
+	if videoID == "" {
+		videoID = "unknown"
+	}
+	
+	return fmt.Sprintf("%s_%s.md", title, videoID)
+}
+
+// sanitizeFilename removes or replaces characters that are not safe for filenames
+func sanitizeFilename(filename string) string {
+	// Replace spaces with underscores
+	filename = strings.ReplaceAll(filename, " ", "_")
+	
+	// Remove or replace unsafe characters
+	unsafe := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|", "\n", "\r", "\t"}
+	for _, char := range unsafe {
+		filename = strings.ReplaceAll(filename, char, "")
+	}
+	
+	// Replace multiple underscores with single underscore
+	for strings.Contains(filename, "__") {
+		filename = strings.ReplaceAll(filename, "__", "_")
+	}
+	
+	// Trim underscores from start and end
+	filename = strings.Trim(filename, "_")
+	
+	return filename
+}
+
 // extractVideoID extracts the video ID from a YouTube URL
 func extractVideoID(url string) string {
 	// Handle youtube.com/watch?v=ID format
@@ -306,15 +369,21 @@ func extractVideoID(url string) string {
 
 // formatTranscriptMarkdown formats the transcription result as markdown
 func formatTranscriptMarkdown(videoURL string, result *ytaudio.TranscriptionResult) string {
-	videoID := extractVideoID(videoURL)
-	title := "YouTube Video Transcript"
-	if videoID != "" {
-		title = fmt.Sprintf("YouTube Video Transcript (%s)", videoID)
+	// Use video title if available, otherwise fall back to video ID
+	title := result.Title
+	if title == "" {
+		videoID := extractVideoID(videoURL)
+		if videoID != "" {
+			title = fmt.Sprintf("YouTube Video Transcript (%s)", videoID)
+		} else {
+			title = "YouTube Video Transcript"
+		}
 	}
 
 	content := fmt.Sprintf(`# %s
 
 **Source:** %s  
+**Video ID:** %s  
 **Transcribed:** %s  
 **Duration:** %v  
 
@@ -323,7 +392,7 @@ func formatTranscriptMarkdown(videoURL string, result *ytaudio.TranscriptionResu
 ## Transcript
 
 %s
-`, title, videoURL, time.Now().Format("2006-01-02 15:04:05"), result.Duration, result.Text)
+`, title, videoURL, result.VideoID, time.Now().Format("2006-01-02 15:04:05"), result.Duration, result.Text)
 
 	return content
 }
