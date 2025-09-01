@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"maai.solutions/gengo/internal/extractors/asr"
 	extractors "maai.solutions/gengo/internal/extractors/pdf"
+	"maai.solutions/gengo/internal/extractors/podcast"
 	webextractors "maai.solutions/gengo/internal/extractors/web"
 	"maai.solutions/gengo/internal/extractors/ytaudio"
 )
@@ -208,6 +209,7 @@ func (m model) View() string {
 		s.WriteString("Welcome! Try these commands:\n")
 		s.WriteString("  /help                           - Show all commands\n")
 		s.WriteString("  ytaudio check                   - Check YouTube transcription setup\n")
+		s.WriteString("  podcast check                   - Check podcast transcription setup\n")
 		s.WriteString("  pdf info <file.pdf>             - Get PDF information\n")
 		s.WriteString("  web extract <url>               - Extract web page content\n\n")
 	}
@@ -258,6 +260,8 @@ func (m model) handleCommand(command string) string {
 		return m.getHelpText()
 	case "ytaudio":
 		return m.handleYtAudioCommand(args)
+	case "podcast":
+		return m.handlePodcastCommand(args)
 	case "pdf":
 		return m.handlePdfCommand(args)
 	case "web":
@@ -276,6 +280,11 @@ func (m model) getHelpText() string {
   ytaudio transcribe <youtube-url> [--project name] [--output file] - Transcribe YouTube video
   ytaudio check                           - Check ytaudio dependencies
   
+  podcast list <rss-url>                  - List podcast episodes from RSS feed
+  podcast transcribe <episode-url> [--project name] [--output file] - Transcribe podcast episode
+  podcast transcribe <rss-url> <episode-number> [--project name] [--output file] - Transcribe specific episode
+  podcast check                           - Check podcast dependencies
+  
   pdf extract <file.pdf> [--project name] [--output file] - Extract text from PDF
   pdf info <file.pdf>                     - Get PDF information
   
@@ -283,6 +292,9 @@ func (m model) getHelpText() string {
   
 Examples:
   ytaudio transcribe https://youtube.com/watch?v=abc123 --project my-videos
+  podcast list https://feeds.example.com/podcast.rss
+  podcast transcribe https://feeds.example.com/episode.mp3 --project podcasts
+  podcast transcribe https://feeds.example.com/podcast.rss 5 --project podcasts
   pdf extract document.pdf --project docs --output extracted.txt
   web extract https://example.com/article --project web-content
   pdf info document.pdf`
@@ -627,4 +639,204 @@ func (m model) handleWebExtract(args []string) string {
 		}
 		return fmt.Sprintf("✅ Content extracted from: %s\nTitle: %s\n\n%s", url, title, content)
 	}
+}
+
+// handlePodcastCommand processes podcast subcommands
+func (m model) handlePodcastCommand(args []string) string {
+	if len(args) == 0 {
+		return "Usage: podcast [list|transcribe|check] [args...]"
+	}
+
+	subCmd := args[0]
+	subArgs := args[1:]
+
+	switch subCmd {
+	case "list":
+		return m.handlePodcastList(subArgs)
+	case "transcribe":
+		return m.handlePodcastTranscribe(subArgs)
+	case "check":
+		return m.handlePodcastCheck()
+	default:
+		return fmt.Sprintf("Unknown podcast subcommand: %s\nAvailable: list, transcribe, check", subCmd)
+	}
+}
+
+// handlePodcastList handles podcast episode listing
+func (m model) handlePodcastList(args []string) string {
+	if len(args) == 0 {
+		return "Usage: podcast list <rss-url>"
+	}
+
+	rssURL := args[0]
+
+	// Validate RSS URL (basic check)
+	if !isValidURL(rssURL) {
+		return fmt.Sprintf("Error: Invalid RSS URL: %s\nPlease provide a valid RSS URL", rssURL)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Configure podcast service
+	tempDir := filepath.Join(os.TempDir(), "gengo-podcast-interactive")
+	config := &podcast.Config{
+		OutputDir:    tempDir,
+		ASRConfig:    asr.DefaultConfig(),
+		CleanupFiles: true,
+	}
+
+	// Create service and get episodes
+	service := podcast.NewService(config)
+	episodes, err := service.ListEpisodes(ctx, rssURL)
+	if err != nil {
+		return fmt.Sprintf("Error fetching episodes: %v", err)
+	}
+
+	if len(episodes) == 0 {
+		return "No episodes found in the podcast feed."
+	}
+
+	// Format results for display
+	result := fmt.Sprintf("✅ Podcast: %s\nEpisodes: %d\n\n", episodes[0].PodcastTitle, len(episodes))
+
+	// Show first 10 episodes to avoid overwhelming the display
+	maxShow := 10
+	if len(episodes) < maxShow {
+		maxShow = len(episodes)
+	}
+
+	for i := 0; i < maxShow; i++ {
+		episode := episodes[i]
+		result += fmt.Sprintf("Episode %d: %s\n", episode.Number, episode.Title)
+		result += fmt.Sprintf("  URL: %s\n\n", episode.FileURL)
+	}
+
+	if len(episodes) > maxShow {
+		result += fmt.Sprintf("... and %d more episodes. Use CLI mode to see all episodes.", len(episodes)-maxShow)
+	}
+
+	return result
+}
+
+// handlePodcastTranscribe handles podcast transcription
+func (m model) handlePodcastTranscribe(args []string) string {
+	if len(args) == 0 {
+		return "Usage: podcast transcribe <episode-url> [--project project-name] [--output filename]\n       podcast transcribe <rss-url> <episode-number> [--project project-name] [--output filename]"
+	}
+
+	url := args[0]
+	var episodeNumber int
+	var err error
+	var episodeMode bool
+
+	// Check if this is episode number mode
+	if len(args) >= 2 {
+		if num, parseErr := strconv.Atoi(args[1]); parseErr == nil {
+			episodeNumber = num
+			episodeMode = true
+		}
+	}
+
+	// Parse additional arguments for project and output
+	var projectName, outputFile string
+	startIndex := 1
+	if episodeMode {
+		startIndex = 2
+	}
+
+	for i := startIndex; i < len(args); i++ {
+		switch args[i] {
+		case "--project":
+			if i+1 < len(args) {
+				projectName = args[i+1]
+				i++
+			}
+		case "--output":
+			if i+1 < len(args) {
+				outputFile = args[i+1]
+				i++
+			}
+		}
+	}
+
+	// Validate URL (basic check)
+	if !isValidURL(url) {
+		return fmt.Sprintf("Error: Invalid URL: %s\nPlease provide a valid URL", url)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// Configure ASR with default settings
+	asrConfig := asr.DefaultConfig()
+
+	// Configure podcast transcription service with temp directory
+	tempDir := filepath.Join(os.TempDir(), "gengo-podcast-interactive")
+	config := &podcast.Config{
+		OutputDir:    tempDir,
+		ASRConfig:    asrConfig,
+		CleanupFiles: true, // Cleanup temp files in interactive mode
+	}
+
+	// Ensure temp directory exists
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return fmt.Sprintf("Error creating temp directory: %v", err)
+	}
+
+	// Create service and transcribe
+	service := podcast.NewService(config)
+	var result *podcast.TranscriptionResult
+
+	if episodeMode {
+		result, err = service.TranscribeEpisodeFromFeed(ctx, url, episodeNumber)
+	} else {
+		result, err = service.TranscribePodcastEpisode(ctx, url)
+	}
+
+	if err != nil {
+		return fmt.Sprintf("Error transcribing episode: %v", err)
+	}
+
+	// Generate filename using episode info
+	filename := generatePodcastFilename(result)
+
+	// Create output configuration with parsed project and output
+	outputConfig := NewOutputConfig(projectName, outputFile)
+
+	// Create markdown content with metadata
+	content := formatPodcastMarkdown(url, result)
+
+	outputPath, err := outputConfig.SaveToProject([]byte(content), filename)
+	if err != nil {
+		return fmt.Sprintf("Error saving transcript: %v", err)
+	}
+
+	return fmt.Sprintf("✅ Transcription completed!\nSaved to: %s\nDuration: %.2f seconds",
+		outputPath, result.Duration.Seconds())
+}
+
+// handlePodcastCheck checks podcast dependencies
+func (m model) handlePodcastCheck() string {
+	result := `Podcast Transcription Dependencies:
+
+Required tools:
+- ffmpeg (for audio conversion)
+- whisper or whisper.cpp (for transcription)
+
+Installation instructions:
+- Install ffmpeg: https://ffmpeg.org/download.html
+- Install whisper: pip install openai-whisper
+- Or install whisper.cpp: https://github.com/ggerganov/whisper.cpp
+
+Please install whisper models:
+  pip install openai-whisper
+  whisper --model base "test"  # This downloads the base model
+  
+For whisper.cpp:
+  Download models from https://huggingface.co/ggerganov/whisper.cpp`
+
+	return result
 }
